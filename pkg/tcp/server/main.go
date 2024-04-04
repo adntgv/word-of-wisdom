@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 	"wordOfWisdom/config"
+	"wordOfWisdom/internal/datasources/repositories/inmem"
+	"wordOfWisdom/internal/tcp/handlers"
+	"wordOfWisdom/pkg/challanger"
 )
 
 type Server struct {
@@ -21,16 +24,16 @@ type Server struct {
 	handler    func(net.Conn)
 }
 
-func NewServer(handler func(net.Conn)) (*Server, error) {
-	cfg, err := config.New()
-	if err != nil {
-		return nil, fmt.Errorf("could not read config: %v", err)
-	}
-
+func NewServer(cfg *config.Config) (*Server, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("%v:%v", cfg.Host, cfg.Port))
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	repo := inmem.NewQuoteRepository()
+	chal := challanger.NewChallanger(cfg.Difficulty)
+
+	handler := handlers.NewConnectionHandler(repo, chal).Handle
 
 	return &Server{
 		wg:         sync.WaitGroup{},

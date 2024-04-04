@@ -9,7 +9,7 @@ import (
 	"strings"
 	"wordOfWisdom/internal/business/domains"
 	"wordOfWisdom/internal/business/usecases"
-	"wordOfWisdom/internal/datasources/repositories/inmem"
+	"wordOfWisdom/pkg/challanger"
 )
 
 type connectionHandler struct {
@@ -17,12 +17,10 @@ type connectionHandler struct {
 	challanges domains.ChallangeUsecase
 }
 
-func NewConnectionHandler() *connectionHandler {
-	repo := inmem.NewQuoteRepository()
-
+func NewConnectionHandler(repo domains.QuoteRepository, chal challanger.Challanger) *connectionHandler {
 	return &connectionHandler{
 		quotes:     usecases.NewQuoteUsecase(repo),
-		challanges: usecases.NewChallangeUsecase(),
+		challanges: usecases.NewChallangeUsecase(chal),
 	}
 }
 
@@ -33,27 +31,33 @@ func (h *connectionHandler) Handle(conn net.Conn) {
 	challenge, err := h.challanges.Generate(ctx)
 	if err != nil {
 		log.Printf("failed to generate challange: %v\n", err)
-		h.send(conn, "failed to generate challange\n")
+		if err1 := h.send(conn, "failed to generate challange\n"); err1 != nil {
+			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
+		}
 		return
 	}
 
 	if err := h.send(conn, challenge.Challange); err != nil {
 		log.Printf("failed to send challange to connection %v: %v\n", conn.RemoteAddr(), err)
-		h.send(conn, "failed to send challange\n")
+		if err1 := h.send(conn, "failed to send challange\n"); err1 != nil {
+			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
+		}
 		return
-
 	}
 
 	challenge.Nonce, err = h.getNonce(conn)
 	if err != nil {
 		log.Printf("failed to fetch nonce from %v: %v\n", conn.RemoteAddr(), err)
-		h.send(conn, "failed to fetch nonce\n")
+		if err1 := h.send(conn, "failed to fetch nonce\n"); err1 != nil {
+			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
+		}
+
 		return
 	}
 
 	// Validate the PoW
 	if err := h.challanges.Validate(ctx, challenge); err != nil {
-		log.Printf("error for challenge %v: %v\n", challenge, err)
+		log.Printf("error for challenge %v validation: %v\n", challenge, err)
 		fmt.Fprintf(conn, "did not solve the challenge\n")
 		return
 	}
@@ -62,12 +66,14 @@ func (h *connectionHandler) Handle(conn net.Conn) {
 	quote, err := h.quotes.GetRandomQuote(ctx)
 	if err != nil {
 		log.Printf("failed to fetch a quote: %v\n", err)
-		h.send(conn, "failed to fetch a quote\n")
+		if err1 := h.send(conn, "failed to fetch a quote\n"); err1 != nil {
+			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
+		}
 		return
 	}
 
 	if err := h.send(conn, quote.Text); err != nil {
-		log.Printf("failed to send a quote %v to %v: %v\n", quote, conn.RemoteAddr(), err)
+		log.Printf("failed to send a quote to %v: %v\n", conn.RemoteAddr(), err)
 		fmt.Fprintf(conn, "failed to send a quote\n")
 		return
 	}

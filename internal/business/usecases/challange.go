@@ -2,31 +2,37 @@ package usecases
 
 import (
 	"context"
-	"math/rand"
-	"strconv"
+	"fmt"
 	"wordOfWisdom/internal/business/domains"
+	"wordOfWisdom/pkg/challanger"
 )
 
 type challangeUsecase struct {
+	challanger challanger.Challanger
 }
 
 // Generate implements domains.ChallangeUsecase.
 func (r *challangeUsecase) Generate(ctx context.Context) (*domains.ChallangeDomain, error) {
-	panic("unimplemented")
+	challange := r.challanger.GenerateChallenge()
+
+	return &domains.ChallangeDomain{
+		Challange: challange,
+		Prefix:    r.challanger.GetPrefix(),
+	}, nil
+
 }
 
 // Validate implements domains.ChallangeUsecase.
 func (r *challangeUsecase) Validate(ctx context.Context, challange *domains.ChallangeDomain) error {
-	panic("unimplemented")
+	if solved := r.challanger.IsValidNonce(challange.Nonce, challange.Challange, challange.Prefix); !solved {
+		return fmt.Errorf("challange not solved %v", challange)
+	}
+
+	return nil
 }
 
-func NewChallangeUsecase() domains.ChallangeUsecase {
-	return &challangeUsecase{}
-}
-
-func generateChallenge() string {
-	return strconv.Itoa(rand.Intn(100000))
-}
-func (h *connectionHandler) isValidPoW(challenge, nonce string) bool {
-	return powlib.IsValidPoW(challenge, nonce)
+func NewChallangeUsecase(challanger challanger.Challanger) domains.ChallangeUsecase {
+	return &challangeUsecase{
+		challanger: challanger,
+	}
 }

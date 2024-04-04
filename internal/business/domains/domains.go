@@ -7,6 +7,7 @@ import (
 type ChallangeDomain struct {
 	Challange string
 	Nonce     string
+	Prefix    string
 }
 
 type ChallangeUsecase interface {
