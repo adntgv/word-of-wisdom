@@ -13,6 +13,7 @@ import (
 	"wordOfWisdom/config"
 	"wordOfWisdom/internal/datasources/repositories/inmem"
 	"wordOfWisdom/internal/tcp/handlers"
+	"wordOfWisdom/internal/tcp/middlewares"
 	"wordOfWisdom/pkg/challanger"
 )
 
@@ -21,7 +22,9 @@ type Server struct {
 	ln         net.Listener
 	shutdown   chan struct{}
 	connection chan net.Conn
-	handler    func(net.Conn)
+	authorized chan net.Conn
+	handle     func(net.Conn)
+	authorize  func(net.Conn) net.Conn
 }
 
 func NewServer(cfg *config.Config) (*Server, error) {
@@ -33,14 +36,17 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	repo := inmem.NewQuoteRepository()
 	chal := challanger.NewChallanger(cfg.Difficulty)
 
-	handler := handlers.NewConnectionHandler(repo, chal).Handle
+	handler := handlers.NewConnectionHandler(repo).Handle
+	authorize := middlewares.NewAuthMiddleware(chal).Authorize
 
 	return &Server{
 		wg:         sync.WaitGroup{},
 		ln:         ln,
 		shutdown:   make(chan struct{}),
 		connection: make(chan net.Conn),
-		handler:    handler,
+		authorized: make(chan net.Conn),
+		handle:     handler,
+		authorize:  authorize,
 	}, nil
 }
 
@@ -105,6 +111,23 @@ func (s *Server) AcceptConnections() {
 	}
 }
 
+func (s *Server) AuthorizeConnections() {
+	defer s.wg.Done()
+
+	for {
+		select {
+		case <-s.shutdown:
+			return
+		case conn := <-s.connection:
+			authorized := s.authorize(conn)
+			if authorized != nil {
+				s.authorized <- authorized
+			} else {
+				conn.Close()
+			}
+		}
+	}
+}
 func (s *Server) HandleConnections() {
 	defer s.wg.Done()
 
@@ -113,7 +136,7 @@ func (s *Server) HandleConnections() {
 		case <-s.shutdown:
 			return
 		case conn := <-s.connection:
-			go s.handler(conn)
+			go s.handle(conn)
 		}
 	}
 }

@@ -9,58 +9,21 @@ import (
 	"strings"
 	"wordOfWisdom/internal/business/domains"
 	"wordOfWisdom/internal/business/usecases"
-	"wordOfWisdom/pkg/challanger"
 )
 
 type connectionHandler struct {
-	quotes     domains.QuoteUsecase
-	challanges domains.ChallangeUsecase
+	quotes domains.QuoteUsecase
 }
 
-func NewConnectionHandler(repo domains.QuoteRepository, chal challanger.Challanger) *connectionHandler {
+func NewConnectionHandler(repo domains.QuoteRepository) *connectionHandler {
 	return &connectionHandler{
-		quotes:     usecases.NewQuoteUsecase(repo),
-		challanges: usecases.NewChallangeUsecase(chal),
+		quotes: usecases.NewQuoteUsecase(repo),
 	}
 }
 
 func (h *connectionHandler) Handle(conn net.Conn) {
 	defer conn.Close()
 	ctx := context.Background()
-
-	challenge, err := h.challanges.Generate(ctx)
-	if err != nil {
-		log.Printf("failed to generate challange: %v\n", err)
-		if err1 := h.send(conn, "failed to generate challange\n"); err1 != nil {
-			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
-		}
-		return
-	}
-
-	if err := h.send(conn, challenge.Challange); err != nil {
-		log.Printf("failed to send challange to connection %v: %v\n", conn.RemoteAddr(), err)
-		if err1 := h.send(conn, "failed to send challange\n"); err1 != nil {
-			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
-		}
-		return
-	}
-
-	challenge.Nonce, err = h.getNonce(conn)
-	if err != nil {
-		log.Printf("failed to fetch nonce from %v: %v\n", conn.RemoteAddr(), err)
-		if err1 := h.send(conn, "failed to fetch nonce\n"); err1 != nil {
-			log.Printf("failed to send error response %v: %v\n", conn.RemoteAddr(), err1)
-		}
-
-		return
-	}
-
-	// Validate the PoW
-	if err := h.challanges.Validate(ctx, challenge); err != nil {
-		log.Printf("error for challenge %v validation: %v\n", challenge, err)
-		fmt.Fprintf(conn, "did not solve the challenge\n")
-		return
-	}
 
 	// Send the quote to the client
 	quote, err := h.quotes.GetRandomQuote(ctx)
