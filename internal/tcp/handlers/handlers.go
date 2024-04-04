@@ -1,55 +1,91 @@
 package handlers
 
 import (
-	"applicationDesignTest/internal/business/domains"
-	"applicationDesignTest/internal/http/requests"
-	"encoding/json"
+	"bufio"
+	"context"
+	"fmt"
 	"log"
-	"net/http"
+	"net"
+	"strings"
+	"wordOfWisdom/internal/business/domains"
+	"wordOfWisdom/internal/business/usecases"
+	"wordOfWisdom/internal/datasources/repositories/inmem"
 )
 
-type OrderHandler struct {
-	orderUsecase domains.OrderUsecase
-	roomUsecase  domains.RoomUsecase
+type connectionHandler struct {
+	quotes     domains.QuoteUsecase
+	challanges domains.ChallangeUsecase
 }
 
-func NewOrderHandler(orderUsecase domains.OrderUsecase, roomUsecase domains.RoomUsecase) *OrderHandler {
-	return &OrderHandler{
-		orderUsecase: orderUsecase,
-		roomUsecase:  roomUsecase,
+func NewConnectionHandler() *connectionHandler {
+	repo := inmem.NewQuoteRepository()
+
+	return &connectionHandler{
+		quotes:     usecases.NewQuoteUsecase(repo),
+		challanges: usecases.NewChallangeUsecase(),
 	}
 }
 
-func (h *OrderHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
-	var newOrderRequest requests.CreateOrderRequest
-	json.NewDecoder(r.Body).Decode(&newOrderRequest)
+func (h *connectionHandler) Handle(conn net.Conn) {
+	defer conn.Close()
+	ctx := context.Background()
 
-	if err := newOrderRequest.Validate(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	challenge, err := h.challanges.Generate(ctx)
+	if err != nil {
+		log.Printf("failed to generate challange: %v\n", err)
+		h.send(conn, "failed to generate challange\n")
 		return
 	}
 
-	room := newOrderRequest.ToRoom()
-	from := newOrderRequest.GetFrom()
-	to := newOrderRequest.GetTo()
+	if err := h.send(conn, challenge.Challange); err != nil {
+		log.Printf("failed to send challange to connection %v: %v\n", conn.RemoteAddr(), err)
+		h.send(conn, "failed to send challange\n")
+		return
 
-	if err := h.roomUsecase.Book(r.Context(), room, from, to); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		log.Printf("Failed to book room \"%v\": %v", room, err)
+	}
+
+	challenge.Nonce, err = h.getNonce(conn)
+	if err != nil {
+		log.Printf("failed to fetch nonce from %v: %v\n", conn.RemoteAddr(), err)
+		h.send(conn, "failed to fetch nonce\n")
 		return
 	}
 
-	newOrder := newOrderRequest.ToOrder()
-
-	if err := h.orderUsecase.Store(r.Context(), newOrder); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Printf("Failed to create order:\n%v\n%v", newOrder, err)
+	// Validate the PoW
+	if err := h.challanges.Validate(ctx, challenge); err != nil {
+		log.Printf("error for challenge %v: %v\n", challenge, err)
+		fmt.Fprintf(conn, "did not solve the challenge\n")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(newOrder)
+	// Send the quote to the client
+	quote, err := h.quotes.GetRandomQuote(ctx)
+	if err != nil {
+		log.Printf("failed to fetch a quote: %v\n", err)
+		h.send(conn, "failed to fetch a quote\n")
+		return
+	}
 
-	log.Printf("Order successfully created: %v", newOrder)
+	if err := h.send(conn, quote.Text); err != nil {
+		log.Printf("failed to send a quote %v to %v: %v\n", quote, conn.RemoteAddr(), err)
+		fmt.Fprintf(conn, "failed to send a quote\n")
+		return
+	}
+}
+
+func (h *connectionHandler) getNonce(conn net.Conn) (string, error) {
+	// Read the response from the client
+	nonce, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("could not read from connection %v: %v", conn, err)
+	}
+
+	return strings.TrimSpace(nonce), nil
+}
+
+func (h *connectionHandler) send(conn net.Conn, data string) error {
+	// Send the data to the client
+	_, err := fmt.Fprintf(conn, "%s\n", data)
+
+	return err
 }

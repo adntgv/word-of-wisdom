@@ -1,17 +1,20 @@
 package main
 
 import (
-	"applicationDesignTest/cmd/api/server"
 	"log"
+	"wordOfWisdom/internal/tcp/handlers"
+	"wordOfWisdom/pkg/tcp/server"
 )
 
 func main() {
-	api, err := server.NewApi()
+	handler := handlers.NewConnectionHandler().Handle
+
+	server, err := server.NewServer(handler)
 	if err != nil {
-		log.Panicf("could not create api server app: %v", err)
+		log.Panicf("could not create  server app: %v", err)
 	}
 
-	if err := api.Run(); err != nil {
-		log.Fatal("erro while running api server app", err)
+	if err := server.Run(); err != nil {
+		log.Fatal("erro while running  server app", err)
 	}
 }
